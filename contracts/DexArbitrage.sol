@@ -5,7 +5,6 @@ import {IUniswapV2Router02} from "../interfaces/IUniswapV2Router02.sol";
 import {IUniswapV2Factory} from "../interfaces/IUniswapV2Factory.sol";
 import {UniswapV2Library} from "../libraries/UniswapV2Library.sol";
 import { IERC20 } from "../interfaces/IERC20.sol";
-import "hardhat/console.sol";
 /*
 
 * matic:0x02E1A80D80c3F1DE3492C14ce391ba94823E39F8
@@ -34,6 +33,7 @@ contract DexArbitrage{
     IUniswapV2Router02 router2;
     IUniswapV2Router02 router3;
 
+
     constructor (address _router1,address _router2,address _factory1,address _factory2){
         _ThisOwner=msg.sender;
         changeArbitrageFactory(_factory1,_factory2);
@@ -43,45 +43,6 @@ contract DexArbitrage{
     modifier onlyOwner(){
         require(msg.sender==_ThisOwner,"Not owner");
         _;
-    }
-
-    mapping(uint=>uint[])public tradeMes;
-
-    //套利策略1
-    function dexV2Arbitrage(address token1,address token2,uint inputAmount,uint spot)external{
-        uint getReceiver1;
-        uint getReceiver2;
-        address[] memory path = new address[](2);
-        path[0] = address(token1);
-        path[1] = address(token2);
-        //获取设置最小输出，滑点范围为(0.1%~1000)
-        uint amountOutMin1=inputAmount * spot / 1000;
-        //授权router
-        require(IERC20(token1).approve(address(router1), inputAmount),"failed approve1");
-        //输入token数量需要>=最小输出(一般都是>最小输出)
-        require(inputAmount>=amountOutMin1,"Amount1 errorr");
-        //转移到该合约
-        IERC20(token1).transferFrom(msg.sender,address(this),inputAmount);
-        getReceiver1 = router1.swapExactTokensForTokens(
-            inputAmount,
-            amountOutMin1,
-            path,
-            address(this),
-            block.timestamp
-        )[1];
-
-        path[0] = address(token2);
-        path[1] = address(token1);
-        
-        require(IERC20(token2).approve(address(router2), getReceiver1),"failed approve2");
-        getReceiver2 = router2.swapExactTokensForTokens(
-            getReceiver1,
-            0,
-            path,
-            address(this),
-            block.timestamp
-        )[1];
-        console.log("getReceiver2:",getReceiver2);
     }
 
     //改变套利factory
@@ -96,31 +57,102 @@ contract DexArbitrage{
         router2=IUniswapV2Router02(_router2);
     }
 
-    //执行sushiSwap v2交换
-    function doSushiV2Swap(address token1,address token2,uint inputAmount,uint spot)external {
-        uint[] memory allAmounts1;
+    //套利策略1（传入使用了uni v2代码的router，第一个传入要交换的token最优路由，第二个传入套利的最优路由）
+    //第三个传入from token，第四个传入第一次交换的目标token，第五个为输入token数量，第六个为滑点设置
+    function dexV2Arbitrage(address bestInRouter,address bestOutRouter,address token1,address token2,uint inputAmount,uint spot)external{
+        uint getReceiver1;
+        uint getReceiver2;
         address[] memory path = new address[](2);
         path[0] = address(token1);
         path[1] = address(token2);
         //获取设置最小输出，滑点范围为(0.1%~1000)
-        uint amountOutMin1=inputAmount * spot / 1000;
+        uint minOutAmount1=IUniswapV2Router02(bestInRouter).getAmountsOut(inputAmount,path)[1];
+        uint amountOutMin1=minOutAmount1 * spot / 1000;
         //授权router
-        require(IERC20(token1).approve(address(router1), inputAmount),"failed approve");
-        //输入token数量需要>=最小输出(一般都是>最小输出)
-        require(inputAmount>=amountOutMin1,"Amount errorr");
+        require(IERC20(token1).approve(bestInRouter, inputAmount),"failed approve1");
         //转移到该合约
         IERC20(token1).transferFrom(msg.sender,address(this),inputAmount);
-        allAmounts1 = router1.swapExactTokensForTokens(
+        getReceiver1 = IUniswapV2Router02(bestInRouter).swapExactTokensForTokens(
             inputAmount,
             amountOutMin1,
             path,
             address(this),
             block.timestamp
-        );
-        tradeMes[0]=allAmounts1;
+        )[1];
+
+        path[0] = address(token2);
+        path[1] = address(token1);
+        //最大输出与加入滑点的最小输出
+        uint minOutAmount2=IUniswapV2Router02(bestOutRouter).getAmountsOut(getReceiver1,path)[1];
+        uint amountOutMin2=minOutAmount2 * spot / 1000;
+        //授权
+        require(IERC20(token2).approve(bestOutRouter, getReceiver1),"failed approve2");
+        getReceiver2 = IUniswapV2Router02(bestOutRouter).swapExactTokensForTokens(
+            getReceiver1,
+            amountOutMin2,
+            path,
+            address(this),
+            block.timestamp
+        )[1];
     }
 
-    //获取到sushiswapv2的交易对数据
+    //套利 v2交换（原）
+    function doSushiV2Swap(address token1,address token2,uint inputAmount,uint spot)external {
+        uint getReceiver1;
+        uint getReceiver2;
+        address[] memory path = new address[](2);
+        path[0] = address(token1);
+        path[1] = address(token2);
+        //获取设置最小输出，滑点范围为(0.1%~1000)
+        uint minOutAmount1=router2.getAmountsOut(inputAmount,path)[1];
+        uint amountOutMin1=minOutAmount1 * spot / 1000;
+        //授权router
+        require(IERC20(token1).approve(address(router2), inputAmount),"failed approve1");
+        //转移到该合约
+        IERC20(token1).transferFrom(msg.sender,address(this),inputAmount);
+        getReceiver1 = router2.swapExactTokensForTokens(
+            inputAmount,
+            amountOutMin1,
+            path,
+            address(this),
+            block.timestamp
+        )[1];
+
+        path[0] = address(token2);
+        path[1] = address(token1);
+        uint minOutAmount2=router1.getAmountsOut(getReceiver1,path)[1];
+        uint amountOutMin2=minOutAmount2 * spot / 1000;
+        require(IERC20(token2).approve(address(router1), getReceiver1),"failed approve2");
+        getReceiver2 = router1.swapExactTokensForTokens(
+            getReceiver1,
+            amountOutMin2,
+            path,
+            address(this),
+            block.timestamp
+        )[1];
+    }
+
+    //提取token
+    function withdrawBalance(address token,uint256 amount) external onlyOwner {
+        require(amount > 0, "amount==0");
+        if(token==address(0x0)){
+            msg.sender.transfer(amount);
+        }else{
+            IERC20(token).transfer(msg.sender, amount);
+        }
+    }
+
+    //得到最好的路由
+    function getBestRouter(address token1,address token2,uint inputAmount)public view returns(uint,address){
+        address[] memory path = new address[](2);
+        path[0] = address(token1);
+        path[1] = address(token2);
+        uint a=router1.getAmountsOut(inputAmount,path)[1];
+        uint b=router2.getAmountsOut(inputAmount,path)[1];
+        return a>b?(a,address(router1)):(b,address(router2));
+    }
+
+    //获取到sushiswapv2的交易对数据(其余也是一样的读取方法
     function getSushiPairPrice1(address token1,address token2,uint inputAmount)public view returns(uint[] memory){
         address[] memory path = new address[](2);
         path[0] = address(token1);
@@ -128,23 +160,6 @@ contract DexArbitrage{
         return router1.getAmountsOut(inputAmount,path);
     }
 
-    //获取到quickswapv2的交易对数据
-    function getQuickPairPrice2(address token1,address token2,uint inputAmount)public view returns(uint[] memory){
-        address[] memory path = new address[](2);
-        path[0] = address(token1);
-        path[1] = address(token2);
-        return router2.getAmountsOut(inputAmount,path);
-    }
-
-    //获取到balance的交易对数据
-    function getSushiPairPrice3(address token1,address token2,uint inputAmount)public view returns(uint[] memory){
-        address[] memory path = new address[](2);
-        path[0] = address(token1);
-        path[1] = address(token2);
-        return router3.getAmountsOut(inputAmount,path);
-    }
-
     //获取到uni v3的交易对数据
-    
 
 }
