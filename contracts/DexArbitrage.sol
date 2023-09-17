@@ -5,7 +5,7 @@ import {IUniswapV2Router02} from "../interfaces/IUniswapV2Router02.sol";
 import {IUniswapV2Factory} from "../interfaces/IUniswapV2Factory.sol";
 import {UniswapV2Library} from "../libraries/UniswapV2Library.sol";
 import { IERC20 } from "../interfaces/IERC20.sol";
-
+import "hardhat/console.sol";
 /*
 
 * matic:0x02E1A80D80c3F1DE3492C14ce391ba94823E39F8
@@ -46,8 +46,43 @@ contract DexArbitrage{
     }
 
     //套利策略1
-    function dexV2Arbitrage(address token0,address token1,uint amount)external{
+    function dexV2Arbitrage(address token1,address token2,uint inputAmount,uint spot)external{
+        uint getReceiver1;
+        uint getReceiver2;
+        address[] memory path = new address[](2);
+        path[0] = address(token1);
+        path[1] = address(token2);
+        //获取设置最小输出，滑点范围为(0.1%~1000)
+        uint amountOutMin1=inputAmount * spot / 1000;
+        //授权router
+        require(IERC20(token1).approve(address(router1), inputAmount),"failed approve1");
+        //输入token数量需要>=最小输出(一般都是>最小输出)
+        require(inputAmount>=amountOutMin1,"Amount1 errorr");
+        //转移到该合约
+        IERC20(token1).transferFrom(msg.sender,address(this),inputAmount);
+        getReceiver1 = router1.swapExactTokensForTokens(
+            inputAmount,
+            amountOutMin1,
+            path,
+            address(this),
+            block.timestamp
+        )[2];
 
+        path[0] = address(token2);
+        path[1] = address(token1);
+        //第二次交换时最小输出
+        uint amountOutMin2=getReceiver1 * spot / 1000;
+        require(IERC20(token2).approve(address(router2), getReceiver1),"failed approve2");
+        //输入token数量需要>=最小输出(一般都是>最小输出)
+        require(getReceiver1>=amountOutMin2,"Amount2 errorr");
+        getReceiver2 = router2.swapExactTokensForTokens(
+            getReceiver1,
+            amountOutMin2,
+            path,
+            address(this),
+            block.timestamp
+        )[2];
+        console.log("getReceiver2:",getReceiver2);
     }
 
     //改变套利factory
@@ -63,7 +98,7 @@ contract DexArbitrage{
     }
 
     //执行sushiSwap v2交换
-    function doSushiV2Swap(address token1,address token2,uint inputAmount,uint spot)external returns(uint[] memory){
+    function doSushiV2Swap(address token1,address token2,uint inputAmount,uint spot)external returns(uint,uint,uint){
         uint[] memory allAmounts1;
         address[] memory path = new address[](2);
         path[0] = address(token1);
@@ -78,13 +113,12 @@ contract DexArbitrage{
         IERC20(token1).transferFrom(msg.sender,address(this),inputAmount);
         allAmounts1 = router1.swapExactTokensForTokens(
             inputAmount,
-            0,
+            amountOutMin1,
             path,
             address(this),
             block.timestamp
         );
-
-        return allAmounts1;
+        return (allAmounts1[0],allAmounts1[1],allAmounts1[2]);
     }
 
     //获取到sushiswapv2的交易对数据
