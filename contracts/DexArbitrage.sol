@@ -20,7 +20,7 @@ import "hardhat/console.sol";
  quick pair:0x4A56a1213b8442d147Fe55cE4AfD3DB6612156E0
  sushi pair:0x2f458C0e872Bcc2f15AB96b0214D139b608ef050
 
- 时间戳:>1694914681
+ 时间戳:>1994914681
 */
 
 contract DexArbitrage{
@@ -45,6 +45,8 @@ contract DexArbitrage{
         _;
     }
 
+    mapping(uint=>uint[])public tradeMes;
+
     //套利策略1
     function dexV2Arbitrage(address token1,address token2,uint inputAmount,uint spot)external{
         uint getReceiver1;
@@ -66,22 +68,19 @@ contract DexArbitrage{
             path,
             address(this),
             block.timestamp
-        )[2];
+        )[1];
 
         path[0] = address(token2);
         path[1] = address(token1);
-        //第二次交换时最小输出
-        uint amountOutMin2=getReceiver1 * spot / 1000;
+        
         require(IERC20(token2).approve(address(router2), getReceiver1),"failed approve2");
-        //输入token数量需要>=最小输出(一般都是>最小输出)
-        require(getReceiver1>=amountOutMin2,"Amount2 errorr");
         getReceiver2 = router2.swapExactTokensForTokens(
             getReceiver1,
-            amountOutMin2,
+            0,
             path,
             address(this),
             block.timestamp
-        )[2];
+        )[1];
         console.log("getReceiver2:",getReceiver2);
     }
 
@@ -98,7 +97,7 @@ contract DexArbitrage{
     }
 
     //执行sushiSwap v2交换
-    function doSushiV2Swap(address token1,address token2,uint inputAmount,uint spot)external returns(uint,uint,uint){
+    function doSushiV2Swap(address token1,address token2,uint inputAmount,uint spot)external {
         uint[] memory allAmounts1;
         address[] memory path = new address[](2);
         path[0] = address(token1);
@@ -118,7 +117,7 @@ contract DexArbitrage{
             address(this),
             block.timestamp
         );
-        return (allAmounts1[0],allAmounts1[1],allAmounts1[2]);
+        tradeMes[0]=allAmounts1;
     }
 
     //获取到sushiswapv2的交易对数据
