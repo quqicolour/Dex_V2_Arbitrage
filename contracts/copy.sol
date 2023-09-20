@@ -67,15 +67,15 @@ contract DexArbitrage{
     IUniswapV2Router02 router2;
     IUniswapV2Router02 router3;
 
-    ISwapRouter public uniV3Router;
+    ISwapRouter private uniV3Router;
 
     //univ3
     IUniswapV3Factory factoryV3=IUniswapV3Factory(0x1F98431c8aD98523631AE4a59f267346ea31F984);
     ISwapRouter routerV3 = ISwapRouter(uniV3Router);
     
 
-    uint160 internal constant MIN_SQRT_RATIO = 4295128739;
-    uint160 internal constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
+    // uint160 internal constant MIN_SQRT_RATIO = 4295128739;
+    // uint160 internal constant MAX_SQRT_RATIO = 1461446703485210103287273052203988822378723970342;
 
 
     constructor (address _router1,address _router2,address _factory1,address _factory2){
@@ -84,12 +84,14 @@ contract DexArbitrage{
         changeArbitrageRouter(_router1,_router2,0xE592427A0AEce92De3Edee1F18E0157C05861564);
     }
 
+    //合约控制人
     modifier onlyOwner(){
         require(msg.sender==_ThisOwner,"Not owner");
         _;
     }
 
-    event tradeMes(address sender,uint amount,uint outAmount,uint sqrt);
+    //盈利事件(发起者，收益，盈利时间，盈利策略(1=>dex v2;2=>uni v3->dex v2;3=>dex v2->uni v3))
+    event arbitrageProfile(address sender,uint128 profile,uint64 currentTime,uint64 profileEvent);
 
     //改变套利factory
     function changeArbitrageFactory(address _factory1,address _factory2)public onlyOwner{
@@ -146,6 +148,10 @@ contract DexArbitrage{
             address(this),
             block.timestamp
         )[1];
+        //检查是否是盈利状态
+        require(getReceiver2>inputAmount,"Non-profit");
+        //触发盈利策略事件
+        emit arbitrageProfile(msg.sender,uint128(getReceiver2-inputAmount),uint64(block.timestamp),1);
     }
 
     //套利策略2
@@ -190,7 +196,10 @@ contract DexArbitrage{
             address(this),
             block.timestamp
         )[1];
-        emit tradeMes(msg.sender,receiveAmount1,receiveAmount2,amountOutMin2);
+        //检查是否是盈利状态
+        require(receiveAmount2>inputAmount,"Non-profit");
+        //触发盈利策略事件
+        emit arbitrageProfile(msg.sender,uint128(receiveAmount2-inputAmount),uint64(block.timestamp),2);
     }
 
     //套利策略3
@@ -235,18 +244,21 @@ contract DexArbitrage{
             });
         //通过uni的v3将token0转换成token1的数量
         uint receiveAmount2 = uniV3Router.exactInputSingle(params);
-        emit tradeMes(msg.sender,receiveAmount1,receiveAmount2,0);
+        //检查是否是盈利状态
+        require(receiveAmount2>inputAmount,"Non-profit");
+        //触发盈利策略事件
+        emit arbitrageProfile(msg.sender,uint128(receiveAmount2-inputAmount),uint64(block.timestamp),3);
     }
 
     //执行uni v3的交换
     function doV3Swap(address token0,address token1,uint128 inputAmount,uint24 _fee)external returns(uint256 receiveAmount){
         //根据输入获得的最小输出值
-        address thisPool=getPoolAddress(token0,token1,_fee);
-        uint outMinAmount=getV3Data(thisPool,inputAmount);
+        // address thisPool=getPoolAddress(token0,token1,_fee);
+        // uint outMinAmount=getV3Data(thisPool,inputAmount);
         //转移相应token到该合约进行交换
         TransferHelper.safeTransferFrom(token0,msg.sender,address(this),inputAmount);
         TransferHelper.safeApprove(token0, address(uniV3Router), inputAmount);
-        (uint160 _sqrtPriceX96,,,,,,) = IUniswapV3Pool(thisPool).slot0();
+        // (uint160 _sqrtPriceX96,,,,,,) = IUniswapV3Pool(thisPool).slot0();
         //进行交换
 
         ISwapRouter.ExactInputSingleParams memory params = ISwapRouter
@@ -262,8 +274,6 @@ contract DexArbitrage{
             });
         //通过uni的v3将token0转换成token1的数量
         receiveAmount = uniV3Router.exactInputSingle(params);
-
-        emit tradeMes(msg.sender,outMinAmount,receiveAmount,_sqrtPriceX96);
     }
 
 
@@ -328,7 +338,7 @@ contract DexArbitrage{
         return a>b?(a,address(router1)):(b,address(router2));
     }
 
-    //获取到sushiswapv2的交易对数据(其余也是一样的读取方法
+    //获取到dex v2的交易对数据(其余也是一样的读取方法
     function getRouterPairPrice(address router,address token0,address token1,uint inputAmount)public view returns(uint[] memory){
         address[] memory path = new address[](2);
         path[0] = address(token0);
@@ -368,4 +378,3 @@ contract DexArbitrage{
     }
 
 }
-
